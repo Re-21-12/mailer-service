@@ -1,54 +1,62 @@
-name: Build and push Docker image (:latest)
-
-# Permisos necesarios para push a GitHub Container Registry
-permissions:
-    contents: read
-    packages: write
+name: Docker Build and Push
 
 on:
     push:
-        branches: [main]
-    workflow_dispatch:
+        branches:
+            - main
+    pull_request:
+        branches:
+            - main
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_NAME: ${{ github.repository }}
 
 jobs:
     build:
         runs-on: ubuntu-latest
 
+        permissions:
+            contents: read
+            packages: write
+
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
 
-            - name: Set up QEMU (for multi-arch builds)
-              uses: docker/setup-qemu-action@v2
-
             - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v2
+              uses: docker/setup-buildx-action@v3
 
             - name: Log in to GitHub Container Registry
-              uses: docker/login-action@v2
+              uses: docker/login-action@v3
               with:
-                  registry: ghcr.io
+                  registry: ${{ env.REGISTRY }}
                   username: ${{ github.actor }}
                   password: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Build and push Docker image (:latest)
+            - name: Compute lowercase repository name
+              id: repo
+              run: |
+                  repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+                  echo "repo_lower=$repo_lower" >> $GITHUB_OUTPUT
+
+            - name: Extract metadata for Docker build
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}
+                  tags: |
+                      type=ref,event=branch
+                      type=sha
+                      type=raw,value=latest
+
+            - name: Build and push Docker image
               uses: docker/build-push-action@v5
               with:
                   context: .
                   file: ./Dockerfile
                   push: true
-                  # GitHub repository may contain uppercase letters (owner name). Docker tags require
-                  # lowercase repository names — we compute a lowercase repo name in the previous step
-                  tags: ghcr.io/${{ steps.repo.outputs.repo_lower }}:latest
-                  # opcional: platforms: "linux/amd64,linux/arm64"
-
-            - name: Show pushed image
-              run: |
-                  echo "Pushed image: ghcr.io/${{ steps.repo.outputs.repo_lower }}:latest"
-
-            - name: Compute lowercase repository name
-              id: repo
-              # Use sh to convert to lower case and persist as an output for later steps
-              run: |
-                  repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-                  echo "repo_lower=$repo_lower" >> $GITHUB_OUTPUT
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
