@@ -37,9 +37,18 @@ jobs:
                   context: .
                   file: ./Dockerfile
                   push: true
-                  tags: ghcr.io/${{ github.repository }}:latest
+                  # GitHub repository may contain uppercase letters (owner name). Docker tags require
+                  # lowercase repository names — we compute a lowercase repo name in the previous step
+                  tags: ghcr.io/${{ steps.repo.outputs.repo_lower }}:latest
                   # opcional: platforms: "linux/amd64,linux/arm64"
 
             - name: Show pushed image
               run: |
-                  echo "Pushed image: ghcr.io/${{ github.repository }}:latest"
+                  echo "Pushed image: ghcr.io/${{ steps.repo.outputs.repo_lower }}:latest"
+
+            - name: Compute lowercase repository name
+              id: repo
+              # Use sh to convert to lower case and persist as an output for later steps
+              run: |
+                  repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+                  echo "repo_lower=$repo_lower" >> $GITHUB_OUTPUT
