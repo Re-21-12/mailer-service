@@ -2,7 +2,7 @@
 /main
 
 # Dependencias de Go
-/go.sum
+# (go.sum se elimina de la lista de ignorados para que se commitee)
 
 # Archivos de entorno
 .env
