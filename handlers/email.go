@@ -13,7 +13,7 @@ import (
 	"mailer-service/models"
 )
 
-// SendEmailHandler handles POST requests to send emails
+// SendEmailHandler handles POST requests to send emails a
 func SendEmailHandler(w http.ResponseWriter, r *http.Request) {
 	// Set CORS headers
 	setCORSHeaders(w)
