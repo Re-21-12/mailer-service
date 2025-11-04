@@ -1,6 +1,5 @@
-# Etapa 1: Construcción
-FROM golang:1.21-alpine AS builder
-
+# ---------- build ----------
+FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
 # copiar ambos archivos de módulos para aprovechar cache de dependencia
@@ -19,7 +18,8 @@ RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/main /app/main
 
 WORKDIR /app
-
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /out/mailer-service /app/mailer-service
 EXPOSE 8080
-
-CMD ["./main"]
+ENTRYPOINT ["/app/mailer-service"]
