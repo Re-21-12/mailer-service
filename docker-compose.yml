@@ -25,13 +25,18 @@ services:
     networks:
       - server
       - traefik-public-attachable    
+    # Load environment variables from a local .env file (or from the shell env)
+    env_file:
+      - .env
     environment:
       - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
       - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
       - EMAIL_TIMEOUT=${EMAIL_TIMEOUT}
       - SERVER_PORT=${SERVER_PORT}
       - SERVER_HOST=${SERVER_HOST}
-      - DB_DSN=postgres://mailer:mailerpass@db:5432/mailerdb?sslmode=disable
+      - DB_DSN=${DB_DSN}
 
 volumes:
   pgdata:

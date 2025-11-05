@@ -18,11 +18,6 @@ import (
 	"mailer-service/storage"
 )
 
-<<<<<<< HEAD
-// SendEmailHandler handles POST requests to send emails a
-func SendEmailHandler(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers
-=======
 type EmailHandler struct {
 	Store *storage.Store
 }
@@ -36,7 +31,6 @@ func NewEmailHandler(s *storage.Store) *EmailHandler { return &EmailHandler{Stor
 // =========================
 // POST JSON: { "to": "...", "subject": "...", "body": "..." }
 func (h *EmailHandler) SendEmailHandler(w http.ResponseWriter, r *http.Request) {
->>>>>>> upstream/main
 	setCORSHeaders(w)
 
 	if r.Method == http.MethodOptions {
