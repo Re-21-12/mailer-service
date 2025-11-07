@@ -6,37 +6,95 @@ import (
 	"os"
 
 	"mailer-service/handlers"
+	"mailer-service/storage"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	// Load environment variables from .env
-	err := godotenv.Load()
+	// ---------------------------------------------------------
+	// CARGA DE CONFIGURACIÓN
+	// ---------------------------------------------------------
+	_ = godotenv.Load()
+
+	port := getEnv("SERVER_PORT", "8080")
+	dsn := getEnv("DB_DSN", "postgres://mailer:mailerpass@localhost:5432/mailerdb?sslmode=disable")
+
+	// ---------------------------------------------------------
+	// CONEXIÓN A BASE DE DATOS
+	// ---------------------------------------------------------
+	store, err := storage.Open(dsn)
 	if err != nil {
-		log.Println("Warning: No se pudo cargar el archivo .env:", err)
-		log.Println("Usando variables de entorno del sistema")
+		log.Fatal("Error abriendo base de datos:", err)
 	}
 
-	// Get port from environment variables
-	port := getEnv("SERVER_PORT", "8080")
-	host := getEnv("SERVER_HOST", "localhost")
+	h := handlers.NewEmailHandler(store)
+	mux := http.NewServeMux()
 
-	// Configure routes
-	http.HandleFunc("/send-email", handlers.SendEmailHandler)
-	http.HandleFunc("/health", handlers.HealthCheckHandler)
+	// ---------------------------------------------------------
+	// HEALTH CHECK
+	// ---------------------------------------------------------
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	})
 
-	// Start server
-	serverAddr := host + ":" + port
-	log.Printf("Servidor de correo iniciado en http://%s", serverAddr)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	// ---------------------------------------------------------
+	// CORREOS
+	// ---------------------------------------------------------
+	mux.HandleFunc("/send", h.SendEmailHandler)
+
+	mux.HandleFunc("/emails", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			h.ListEmailsHandler(w, r)
+		} else {
+			http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/emails/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			h.DeleteEmailHandler(w, r)
+		} else {
+			http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// ---------------------------------------------------------
+	// PLANTILLAS
+	// ---------------------------------------------------------
+	mux.HandleFunc("/templates", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			h.CreateTemplateHandler(w, r)
+		} else {
+			http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/templates/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			h.UpdateTemplateHandler(w, r)
+		case http.MethodDelete:
+			h.DeleteTemplateHandler(w, r)
+		default:
+			http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// ---------------------------------------------------------
+	// SERVIDOR
+	// ---------------------------------------------------------
+	log.Printf("Mailer corriendo en http://localhost:%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
 
-// getEnv fetches environment variables with a default value
-func getEnv(key, defaultValue string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
+// ---------------------------------------------------------
+// UTILIDADES
+// ---------------------------------------------------------
+func getEnv(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
 	}
-	return value
+	return d
 }

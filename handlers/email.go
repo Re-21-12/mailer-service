@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,159 +12,249 @@ import (
 	"time"
 
 	"mailer-service/models"
+	"mailer-service/storage"
 )
 
+<<<<<<< HEAD
 // SendEmailHandler handles POST requests to send emails a
 func SendEmailHandler(w http.ResponseWriter, r *http.Request) {
 	// Set CORS headers
 	setCORSHeaders(w)
+=======
+// ==========================================================
+// HANDLER PRINCIPAL
+// ==========================================================
+>>>>>>> upstream/main
 
-	// Handle preflight OPTIONS
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
+type EmailHandler struct{ Store *storage.Store }
+
+func NewEmailHandler(s *storage.Store) *EmailHandler {
+	return &EmailHandler{Store: s}
+}
+
+// ==========================================================
+// UTILIDADES
+// ==========================================================
+
+func setHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+}
+
+func getEnv(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
 	}
+	return d
+}
 
-	// Verify method is POST
-	if r.Method != "POST" {
+// ==========================================================
+// /send — ENVÍO DE CORREOS
+// ==========================================================
+
+func (h *EmailHandler) SendEmailHandler(w http.ResponseWriter, r *http.Request) {
+	setHeaders(w)
+	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Decode JSON from request body
-	var emailReq models.EmailRequest
-	err := json.NewDecoder(r.Body).Decode(&emailReq)
+	var req models.EmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.To == "" || req.Subject == "" || req.Body == "" {
+		http.Error(w, "Campos requeridos: to, subject, body", http.StatusBadRequest)
+		return
+	}
+
+	id, err := h.Store.InsertQueued(r.Context(), req.To, req.Subject, req.Body)
 	if err != nil {
-		sendErrorResponse(w, "Error decodificando JSON: "+err.Error())
+		http.Error(w, "Error en base de datos: "+err.Error(), 500)
 		return
 	}
 
-	// Validate required fields
-	if emailReq.To == "" || emailReq.Subject == "" || emailReq.Body == "" {
-		sendErrorResponse(w, "Todos los campos (to, subject, body) son requeridos")
+	if err := h.sendSMTP(req.To, req.Subject, req.Body); err != nil {
+		_ = h.Store.MarkFailed(r.Context(), id, err.Error())
+		http.Error(w, "Error enviando correo: "+err.Error(), 500)
 		return
 	}
 
-	// Validate recipient email format
-	if !isValidEmail(emailReq.To) {
-		sendErrorResponse(w, "Formato de email destinatario inválido")
-		return
-	}
-
-	// Send email
-	err = sendEmail(emailReq)
-	if err != nil {
-		sendErrorResponse(w, "Error enviando correo: "+err.Error())
-		return
-	}
-
-	// Send success response
-	response := models.EmailResponse{
+	_ = h.Store.MarkSent(r.Context(), id)
+	json.NewEncoder(w).Encode(models.EmailResponse{
 		Success: true,
 		Message: "Correo enviado exitosamente",
-	}
-
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	})
 }
 
-// sendEmail sends the email using SMTP
-func sendEmail(email models.EmailRequest) error {
-	// SMTP server configuration from environment variables
-	smtpHost := getEnv("SMTP_HOST", "smtp.gmail.com")
-	smtpPort := getEnv("SMTP_PORT", "587")
-	smtpUsername := getEnv("SMTP_USERNAME", "")
-	smtpPassword := getEnv("SMTP_PASSWORD", "")
-	fromEmail := getEnv("FROM_EMAIL", smtpUsername)
-	timeoutStr := getEnv("EMAIL_TIMEOUT", "30")
+// ==========================================================
+// /emails — LISTAR Y ELIMINAR EMAILS
+// ==========================================================
 
-	// Ensure we have credentials
-	if smtpUsername == "" || smtpPassword == "" {
-		return fmt.Errorf("credenciales SMTP no configuradas. Verifica SMTP_USERNAME y SMTP_PASSWORD")
+func (h *EmailHandler) ListEmailsHandler(w http.ResponseWriter, r *http.Request) {
+	setHeaders(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
 	}
 
-	// Convert timeout to integer
-	timeout, err := strconv.Atoi(timeoutStr)
+	items, err := h.Store.ListEmails(r.Context())
 	if err != nil {
-		timeout = 30
+		http.Error(w, err.Error(), 500)
+		return
 	}
 
-	// Authentication
-	auth := smtp.PlainAuth("", smtpUsername, smtpPassword, smtpHost)
+	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
+		"data":    items,
+	})
+}
 
-	// Build message
-	from := fromEmail
-	to := []string{email.To}
-	
-	msg := []byte("To: " + email.To + "\r\n" +
-		"From: " + from + "\r\n" +
-		"Subject: " + email.Subject + "\r\n" +
-		"MIME-version: 1.0;\r\n" +
-		"Content-Type: text/html; charset=\"UTF-8\";\r\n" +
-		"\r\n" +
-		email.Body + "\r\n")
+func (h *EmailHandler) DeleteEmailHandler(w http.ResponseWriter, r *http.Request) {
+	setHeaders(w)
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := strings.TrimPrefix(r.URL.Path, "/emails/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "ID inválido", 400)
+		return
+	}
+	if err := h.Store.DeleteEmail(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(models.EmailResponse{Success: true, Message: "Correo eliminado"})
+}
 
-	// Send email with timeout
-	err = sendEmailWithTimeout(smtpHost+":"+smtpPort, auth, from, to, msg, time.Duration(timeout)*time.Second)
+// ==========================================================
+// /CRUD  DE PLANTILLAS
+// ==========================================================
+
+// POST /templates
+func (h *EmailHandler) CreateTemplateHandler(w http.ResponseWriter, r *http.Request) {
+	setHeaders(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var t struct {
+		Name    string `json:"name"`
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if t.Name == "" || t.Subject == "" || t.Body == "" {
+		http.Error(w, "Campos requeridos: name, subject, body", http.StatusBadRequest)
+		return
+	}
+
+	id, err := h.Store.InsertTemplate(r.Context(), t.Name, t.Subject, t.Body)
 	if err != nil {
-		return fmt.Errorf("error SMTP: %v", err)
+		http.Error(w, "Error al crear plantilla: "+err.Error(), 500)
+		return
 	}
 
-	return nil
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "id": id})
 }
 
-// sendEmailWithTimeout sends email with timeout
-func sendEmailWithTimeout(addr string, auth smtp.Auth, from string, to []string, msg []byte, timeout time.Duration) error {
-	// This is a basic implementation - consider using an SMTP client with timeout in production
-	return smtp.SendMail(addr, auth, from, to, msg)
-}
-
-// HealthCheckHandler to check service status
-func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	setCORSHeaders(w)
-	
-	response := map[string]interface{}{
-		"status":    "healthy",
-		"service":   "mailer-service",
-		"timestamp": time.Now().Format(time.RFC3339),
+// PUT /templates/{id}
+func (h *EmailHandler) UpdateTemplateHandler(w http.ResponseWriter, r *http.Request) {
+	setHeaders(w)
+	if r.Method != http.MethodPut {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// setCORSHeaders sets CORS headers
-func setCORSHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-}
-
-// sendErrorResponse sends an error response
-func sendErrorResponse(w http.ResponseWriter, errorMsg string) {
-	response := models.EmailResponse{
-		Success: false,
-		Message: "Error enviando correo",
-		Error:   errorMsg,
+	idStr := strings.TrimPrefix(r.URL.Path, "/templates/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "ID inválido", 400)
+		return
 	}
 
-	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(response)
-}
-
-// getEnv fetches environment variables with a default value
-func getEnv(key, defaultValue string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
+	var t struct {
+		Name    string `json:"name"`
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
 	}
-	return value
+
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.Store.UpdateTemplate(r.Context(), id, t.Name, t.Subject, t.Body); err != nil {
+		http.Error(w, "Error al actualizar plantilla: "+err.Error(), 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Plantilla actualizada"})
 }
 
-// isValidEmail performs a basic email validation
-func isValidEmail(email string) bool {
-	// Basic validation - make more robust if needed
-	return len(email) > 3 && strings.Contains(email, "@") && strings.Contains(email, ".")
+// DELETE /templates/{id}
+func (h *EmailHandler) DeleteTemplateHandler(w http.ResponseWriter, r *http.Request) {
+	setHeaders(w)
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/templates/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "ID inválido", 400)
+		return
+	}
+
+	if err := h.Store.DeleteTemplate(r.Context(), id); err != nil {
+		http.Error(w, "Error al eliminar plantilla: "+err.Error(), 500)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Plantilla eliminada"})
+}
+
+// ==========================================================
+// SMTP ENVÍO DIRECTO
+// ==========================================================
+
+func (h *EmailHandler) sendSMTP(to, subject, body string) error {
+	host := getEnv("SMTP_HOST", "smtp.gmail.com")
+	port := getEnv("SMTP_PORT", "587")
+	user := getEnv("SMTP_USERNAME", "")
+	pass := getEnv("SMTP_PASSWORD", "")
+	from := getEnv("FROM_EMAIL", user)
+
+	if user == "" || pass == "" {
+		return fmt.Errorf("SMTP no configurado")
+	}
+
+	addr := host + ":" + port
+	auth := smtp.PlainAuth("", user, pass, host)
+
+	msg := bytes.NewBuffer(nil)
+	msg.WriteString(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n", from, to, subject))
+	msg.WriteString("MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n")
+	msg.WriteString(body)
+
+	c := make(chan error, 1)
+	go func() { c <- smtp.SendMail(addr, auth, from, []string{to}, msg.Bytes()) }()
+	select {
+	case err := <-c:
+		return err
+	case <-time.After(30 * time.Second):
+		return fmt.Errorf("timeout en envío SMTP")
+	}
 }
