@@ -15,18 +15,9 @@ import (
 	"mailer-service/storage"
 )
 
-<<<<<<< HEAD
-// SendEmailHandler handles POST requests to send emails a
-func SendEmailHandler(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers
-	setCORSHeaders(w)
-=======
-// ==========================================================
-// HANDLER PRINCIPAL
-// ==========================================================
->>>>>>> upstream/main
-
-type EmailHandler struct{ Store *storage.Store }
+type EmailHandler struct {
+	Store *storage.Store
+}
 
 func NewEmailHandler(s *storage.Store) *EmailHandler {
 	return &EmailHandler{Store: s}
@@ -54,7 +45,12 @@ func getEnv(k, d string) string {
 // ==========================================================
 
 func (h *EmailHandler) SendEmailHandler(w http.ResponseWriter, r *http.Request) {
-	setHeaders(w)
+	setCORSHeaders(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return

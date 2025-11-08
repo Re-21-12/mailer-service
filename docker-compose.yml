@@ -19,26 +19,36 @@ services:
 
   adminer:
     image: adminer
-    ports:
-      - "8081:8080"
-    depends_on:
-      - db
+    ports: ["8081:8080"]
+    depends_on: ["db"]
 
   mail-service:
-    container_name: mail-service
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${MAIL_IMAGE:-ghcr.io/re-21-12/mailer-service:latest}
+    depends_on:
+      - backend
+    networks:
+      - server
+      - traefik-public-attachable    
+    # Load environment variables from a local .env file (or from the shell env)
     env_file:
       - .env
     environment:
-      DB_DSN: postgres://mailer:mailerpass@db:5432/mailerdb?sslmode=disable
-    ports:
-      - "8080:8080"  # cambia a 8080:8080 para evitar confusión
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - EMAIL_TIMEOUT=${EMAIL_TIMEOUT}
+      - SERVER_PORT=${SERVER_PORT}
+      - SERVER_HOST=${SERVER_HOST}
+      - DB_DSN=${DB_DSN}
 
 volumes:
   pgdata:
+
+networks:
+  server:
+    driver: overlay
+    attachable: true
+    external: true
+  traefik-public-attachable:
+    external: true
